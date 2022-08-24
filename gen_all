@@ -1,0 +1,2277 @@
+var lowerCaseNaming = function(data) {
+	 return data.substring(0, 1).toLowerCase() + data.substring(1);
+ }
+var upperCaseNaming = function(data) {
+	 return data.substring(0, 1).toUpperCase() + data.substring(1);
+}
+var genType = function(col) {
+	var datatype= col.get("data-type");
+	var typeDef = datatype;
+	var option = datatype.substring(0,1); 
+	switch(true) {
+		case (option == "i") :
+			if(datatype.substring(0,3) == "int") {typeDef = "Integer";}
+			break;
+		case (option == "b") :
+			if(datatype.substring(0,6) == "bigint") {typeDef = "Long";}
+			break;			
+		case (option == "n") :
+		    var domain_name = col.get("domain").get("name");
+		    log(col.get("domain").get("name"));
+			if(domain_name == "금액") {
+				typeDef = "BigDecimal";
+				break;	
+			} else {
+				if(datatype.indexOf(",") > 0) {typeDef = "Double";} else {typeDef = "Long";}
+				break;				
+			}
+		case (option == "d") :
+			if(datatype.substring(0,8) == "datetime") {typeDef = "LocalDateTime";}
+			break;
+		case (option == "c") :
+			typeDef = "String";
+			break;
+		case (option == "v") :
+			typeDef = "String";
+			break;
+		default :
+			typeDef = datatype;
+			break;	
+	}
+	return typeDef;
+}
+
+// 참고 : https://www.baeldung.com/hibernate-identifiers
+var genIdGeneratorAnnotation = function(tablename) {
+	
+	var annotationDef =  format("\t\@GeneratedValue(strategy=GenerationType.TABLE, generator=\"table-gen-%s\")", tablename.toLowerCase());
+	
+	return annotationDef;
+}
+
+// 참고 : https://www.baeldung.com/hibernate-identifiers
+var genTableGeneratorAnnotation = function(tablename) {
+	
+	var annotationDef =  format("\@TableGenerator(name=\"table-gen-%s\", table=\"CO.IDS\",\n", tablename.toLowerCase());
+	
+	annotationDef += format("\t\pkColumnName=\"TableId\", valueColumnName=\"SEQ\", pkColumnValue=\"%s\",\n", tablename);
+	annotationDef += format("\t\initialValue=0, allocationSize=1)");	
+	
+	return annotationDef;
+}
+
+var genIdGeneratorAnnotationSimple = function() {
+	var annotationDef = format("\t\@GeneratedValue");
+	
+	return annotationDef;
+}
+
+var existDateTimeField = function(columns) {
+
+	var retVal = false;
+    columns.each(function(it) {
+		
+		var fieldName = it.get("physical-name");
+		var datatype = it.get("data-type")
+			
+		if(datatype == "datetime") {
+			retVal = true;	
+		}	
+	});
+	
+	return retVal;
+}
+
+var genColAnnotation = function(col) {
+	
+	var colStr = col.get("is-foreign-key") == true ? "@JoinColumn" : "@Column";
+	var datatype = col.get("data-type");
+	
+	var annotationDef = "";
+	var colAnnoDef = format("\t%s(name=\"%s\")", colStr, col.get("physical-name"));
+	if(datatype.substring(0,1) == 'c' && datatype.substring(0,4) == "char") {
+		colAnnoDef = format("\t%s(name=\"%s\", columnDefinition=\"char\")", colStr, col.get("physical-name"));
+	} else if(datatype.substring(0,1) == 'n' && datatype.indexOf(",") > 0) {
+		colAnnoDef = format("\t%s(name=\"%s\", columnDefinition=\"%s\")", colStr, col.get("physical-name"), col.get("data-type"));
+	}
+		
+	if(col.get("physical-name") == "Version") {
+		annotationDef = format("\t@Version\n") + colAnnoDef;
+	} else {
+		if (col.get("is-foreign-key") == true) {
+			var ref_def = col.getUserProperty("ref-def");
+			if (ref_def) {
+				if(ref_def == "oo") {
+					annotationDef = format("\t@OneToOne(fetch=FetchType.LAZY)\n") + colAnnoDef;
+				} else if(ref_def == "mo") {
+					annotationDef = format("\t@ManyToOne(fetch=FetchType.LAZY)\n") + colAnnoDef;
+				} else {
+					annotationDef = format("\t@ManyToOne(fetch=FetchType.LAZY)\n") + colAnnoDef;
+				}
+			} else {
+				annotationDef = format("\t@ManyToOne(fetch=FetchType.LAZY)\n") + colAnnoDef;	
+			}
+		} else if (col.getUserProperty("enum-type")) {
+			annotationDef = format("\t@Enumerated(EnumType.STRING)\n") + colAnnoDef;
+		} else {
+			annotationDef = colAnnoDef;	
+		}
+	}
+	
+	return annotationDef;
+}
+
+var genFieldWithColRef = function(col, colRefs) {
+	
+	var field_name = col.getUserProperty("field-name")
+	
+	if (field_name) {
+		//log("field_name : userProperty ==> " + field_name);
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+		//log("field_name : physical_name ==> " + field_name);
+	}
+	
+	if (field_name == "version") {
+		field_name	= field_name + " = 1"
+	}
+	
+	var fieldDef = format("\tprivate %s %s;", genTypeWithColRef(col, colRefs), field_name);
+	
+	return fieldDef;
+}
+
+var genTypeWithColRef = function(col, colRefs) {
+	
+	if (col.get("is-foreign-key") == true) {
+		
+		var type_name = "";
+		colRefs.each(function(colRef) {
+			
+			var child_col = colRef.get("child-column");
+			var parent_col = colRef.get("parent-column");
+			
+			if (col.get("physical-name") == child_col.get("physical-name")) {
+				var parent_table = parent_col.get("table");
+				type_name = parent_table.getUserProperty("class-name");
+				if(type_name) {
+					//log("type_name : userProperty ==> " + type_name);
+				} else {
+					type_name = parent_table.get("physical-name");
+					//log("type_name : tableName ==> " + type_name);
+				}
+			}
+		});
+		
+		return type_name;
+	} else {
+		
+		if(col.getUserProperty("enum-type")) {
+			return col.getUserProperty("enum-type"); 
+		} else {
+			return genType(col);	
+		}
+	}
+}
+
+/*
+ * DTO 등에서 field명을 사용할 경우 id, name 도메인 decorating
+ */
+var genFieldName = function(col) {
+	
+	var fieldName = null;
+	var colName = col.get("physical-name");
+	if (colName == "Version") {
+		fieldName = "Version"
+	} else {
+		
+		var fieldName = col.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = lowerCaseNaming(col.get("physical-name"));	
+		}
+		if(fieldName == "Id" || fieldName == "name") {
+			fieldName = lowerCaseNaming(class_name) + upperCaseNaming(fieldName);
+		}
+	}
+	
+	return fieldName;
+}
+
+/*
+ * field명에 추가 decorating없이 사용
+ */
+var genFieldValue = function(col) {
+	var fieldName = col.getUserProperty("field-name");
+	if(!fieldName) {
+		fieldName = lowerCaseNaming(col.get("physical-name"));	
+	}
+	
+	return fieldName;
+}
+
+var genFieldComment = function(col) {
+	var fieldComment = col.get("logical-name");
+	if(!fieldComment) {
+		fieldComment = "컬럼 논리명 없음";	
+	}
+		
+	return fieldComment;
+}
+
+var genField4FkId = function(col, colRefs) {
+	
+	var field_name = col.getUserProperty("field-name")
+	
+	if (field_name) {
+		//log("field_name : userProperty ==> " + field_name);
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+		//log("field_name : physical_name ==> " + field_name);
+	}
+	
+	var fieldDef = format("\tprivate %s %s;", genType(col), field_name+"Id");
+	//var fieldDef = format("\tprivate %s %s;", col.get("data-type"), lowerCaseNaming(col.get("physical-name")));
+	return fieldDef;
+}
+
+var genField4FkName = function(col, colRefs) {
+	
+	var field_name = col.getUserProperty("field-name")
+	
+	if (field_name) {
+		//log("field_name : userProperty ==> " + field_name);
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+		//log("field_name : physical_name ==> " + field_name);
+	}
+	
+	var fieldDef = format("\tprivate %s %s;", "String", field_name+"Name");
+	
+	return fieldDef;
+}
+
+var genFieldWithClass = function(col, className) {
+	
+	var field_name = col.getUserProperty("field-name")
+	
+	if (field_name) {
+		//log("field_name : userProperty ==> " + field_name);
+		if (field_name == "id") {
+			field_name = lowerCaseNaming(className) + "Id";
+		} else if (field_name == "name") {
+			field_name = lowerCaseNaming(className) + "Name";
+		}
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+		//log("field_name : physical_name ==> " + field_name);
+	}
+	
+	var fieldDef = format("\tprivate %s %s;", genType(col), field_name);
+	//var fieldDef = format("\tprivate %s %s;", col.get("data-type"), lowerCaseNaming(col.get("physical-name")));
+	return fieldDef;
+}
+
+var genFieldWithClass4EnumTitle = function(col, className) {
+	
+	var field_name = col.getUserProperty("field-name")
+	if(!field_name) {
+	field_name = lowerCaseNaming(genFieldName(col));	
+	}
+	
+	var fieldDef = format("\tprivate %s %sTitle;", genType(col), field_name);
+	return fieldDef;
+}
+
+
+var genParamField4Enum = function(col) {
+	var enumType = col.getUserProperty("enum-type");
+	var fieldName = col.getUserProperty("field-name") ?  col.getUserProperty("field-name") : lowerCaseNaming(genFieldName(col.get("physical-name"))); 
+	var fieldDef = format("%s %s", enumType, fieldName);
+	return fieldDef;
+}
+
+var genParamField4FkId = function(col, colRefs) {
+	var field_name = col.getUserProperty("field-name")
+	if (field_name) {
+		//log("field_name : userProperty ==> " + field_name);
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+		//log("field_name : physical_name ==> " + field_name);
+	}
+	
+	var fieldDef = format("%s %s", genType(col), field_name+"Id");
+	return fieldDef;	
+}
+
+var genParamField4FkName = function(col, colRefs) {
+	var field_name = col.getUserProperty("field-name")
+	if (field_name) {
+		//log("field_name : userProperty ==> " + field_name);
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+		//log("field_name : physical_name ==> " + field_name);
+	}
+	
+	var fieldDef = format("%s %s", "String", field_name+"Name");
+	return fieldDef;	
+}
+
+var genParamFieldWithClass = function(col, className) {
+	var field_name = col.getUserProperty("field-name")
+	if (field_name) {
+		//log("field_name : userProperty ==> " + field_name);
+		if (field_name == "id") {
+			field_name = lowerCaseNaming(className) + "Id";
+		} else if (field_name == "name") {
+			field_name = lowerCaseNaming(className) + "Name";
+		}
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+		//log("field_name : physical_name ==> " + field_name);
+	}
+	
+	var fieldDef = format("%s %s", genType(col), field_name);
+	return fieldDef;
+}
+
+var genParamNameWithClass = function(col, className) {
+	var field_name = col.getUserProperty("field-name")
+	if (field_name) {
+		//log("field_name : userProperty ==> " + field_name);
+		if (field_name == "id") {
+			field_name = lowerCaseNaming(className) + "Id";
+		} else if (field_name == "name") {
+			field_name = lowerCaseNaming(className) + "Name";
+		}
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+		//log("field_name : physical_name ==> " + field_name);
+	}
+	
+	return field_name;
+}
+
+var genConsInitWithClass = function(col, className) {
+	var field_name = col.getUserProperty("field-name")
+	if (field_name) {
+		if (field_name == "id") {
+			field_name = lowerCaseNaming(className) + "Id";
+		} else if (field_name == "name") {
+			field_name = lowerCaseNaming(className) + "Name";
+		}
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+	}
+	
+	return field_name;
+}
+
+var genConsInitWithClass4EnumTitle = function(col, className) {
+	var field_name = col.getUserProperty("field-name")
+	if(!field_name) {
+		field_name = lowerCaseNaming(genFieldName(col));	
+	}
+	
+	var fieldDef = format("%sTitle", field_name);
+	return fieldDef;
+}
+
+var genConsInit4FkId = function(col, colRefs) {
+	var field_name = col.getUserProperty("field-name")
+	if (field_name) {
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+	}
+	return field_name+"Id";	
+}
+
+var genConsInit4FkName = function(col, colRefs) {
+	var field_name = col.getUserProperty("field-name")
+	if (field_name) {
+	} else {
+		field_name = lowerCaseNaming(genFieldName(col));
+	}
+	return field_name+"Name";	
+}
+
+var genValidationNotNull = function(col, tail_name) {
+	
+	var notnull_valid = null;
+
+	if (col.get("is-primary-key") == true) {
+			
+		if (tail_name == "UpdateDTO") {
+			
+			var notnull_valid = format("@NotNull(message = \"%s은(는) 필수입력항목입니다\")", col.get("logical-name"));
+			
+		} else if (tail_name == "CreateDTO") {
+			
+			if (col.get("domain").get("name") != "ID" ) {
+				var notnull_valid = format("@NotNull(message = \"%s은(는) 필수입력항목입니다\")", col.get("logical-name"));				
+			}			
+		}			
+		 
+	} else {
+		
+		if (tail_name == "CreateDTO" || tail_name == "UpdateDTO") {
+			if(col.getUserProperty("field-name") == "name" ) {
+				var notnull_valid = format("@NotNull(message = \"%s은(는) 필수입력항목입니다\")", col.get("logical-name"));			
+			}		
+		}		
+	}
+	
+	return notnull_valid;
+}
+
+var existValidNotNullField = function(columns, tail_name) {
+	var retVal = false;
+    columns.each(function(it) {
+		
+		if (it.get("is-primary-key") == true && tail_name == "UpdateDTO") {
+			retVal = true;
+		}
+		
+		if (it.get("is-primary-key") == true && tail_name == "CreateDTO" && it.get("domain").get("name") != "ID") {
+			retVal = true;
+		}
+
+		if ((tail_name == "CreateDTO" || tail_name == "UpdateDTO") && it.getUserProperty("field-name") == "name") {
+			retVal = true;
+		}			
+	});
+	
+	return retVal;
+}
+
+var genEntity = function() {
+
+	var existDataTime = existDateTimeField(columns);
+			
+	var iFile = newFile("gen-sources/" + class_name + ".java", "UTF-8");
+	
+	if(iFile.exist()) {
+		if(!promptQuestion("[ENTITY] exist old file. overwrite?")){
+			exit();
+		}
+	}
+		
+	// file stream open()
+	var iOut = iFile.getOutputStream();
+
+	// package import
+	iOut.printf("package com.kyoborealco.kpmsn.entity;\n");
+	iOut.printf("\n");
+	iOut.printf("import java.io.Serializable;\n");
+	if (existDataTime) {
+		iOut.printf("import java.time.LocalDateTime;\n");	
+	}
+	iOut.printf("\n");
+	iOut.printf("import javax.persistence.Column;\n");
+	iOut.printf("import javax.persistence.Embedded;\n");
+	iOut.printf("import javax.persistence.Entity;\n");
+	iOut.printf("import javax.persistence.EntityListeners;\n");
+	iOut.printf("import javax.persistence.GeneratedValue;\n");
+	iOut.printf("import javax.persistence.GenerationType;\n");
+	iOut.printf("import javax.persistence.Id;\n");
+	iOut.printf("import javax.persistence.Table;\n");
+	iOut.printf("import javax.persistence.TableGenerator;\n");
+	iOut.printf("import javax.persistence.Version;\n");
+	iOut.printf("\n");
+	iOut.printf("import com.kyoborealco.kpmsn.entity.Audit;\n");
+	iOut.printf("import com.kyoborealco.kpmsn.entity.AuditListener;\n");
+	iOut.printf("import com.kyoborealco.kpmsn.entity.Auditable;\n");
+	iOut.printf("\n");
+	iOut.printf("import lombok.Getter;\n");
+	iOut.printf("import lombok.Setter;\n");
+	iOut.printf("\n");
+	
+	// comment part
+	iOut.printf("/** \n");
+	iOut.printf(" * <pre> \n");
+	iOut.printf(" * %s - %s \n", schema.get("logical-name"), entity_name);
+	iOut.printf(" * </pre> \n");
+	iOut.printf(" * \n");
+	iOut.printf(" */ \n");
+	
+	// Entity & Table annotation
+	iOut.printf("@Getter \n");
+	iOut.printf("@Setter \n");
+	iOut.printf("@Entity \n");
+	iOut.printf("@EntityListeners(AuditListener.class) \n");
+	iOut.printf("@Table(name=\"%s\", schema=\"%s\") \n", table_name, schema.get("physical-name"));
+	columns.each(function(it) {
+		if (it.get("is-primary-key") == true) {
+			domain_name = it.get("domain").get("name");
+			if(domain_name == "ID") {
+				iOut.printf("%s\n", genTableGeneratorAnnotation(table_name));	
+			}
+		}
+	});
+	// start of class
+	iOut.printf("public class %s implements Auditable, Serializable { \n", class_name);
+	iOut.printf("\n");
+	iOut.printf("\tprivate static final long serialVersionUID = 1L;\n");
+	iOut.printf("\n");
+	
+	// column index init
+	var colIndex = 0;
+	colums_size = columns.size();
+	
+	// field
+	columns.each(function(it) {
+	
+		colIndex++;
+
+		iOut.printf("\t/** %s */ \n", genFieldComment(it));
+		if (it.get("is-primary-key") == true) {
+			domain_name = it.get("domain").get("name");
+			//log(domain_name);
+			iOut.printf("\t@Id \n");
+			if(domain_name == "ID") {
+				iOut.printf("%s \n", genIdGeneratorAnnotation(table_name));	
+			} else if (domain_name == "순번"){
+				iOut.printf("%s \n", genIdGeneratorAnnotationSimple(it, table_name));
+			}
+		}
+		iOut.printf("%s \n", genColAnnotation(it));
+		iOut.printf("%s \n", genFieldWithColRef(it, colRefs));
+		iOut.printf("\n");
+		
+	});
+	
+	iOut.printf("\t/** %s */ \n", "audit");
+	iOut.printf("\t%s \n", "@Embedded");
+	iOut.printf("\t%s \n", "private Audit audit;");
+	
+	// end of class
+	iOut.printf("} \n");
+	
+	
+	// file stream close
+	iOut.close();
+}
+
+
+var genDTO = function(tail_name) {
+
+	var tail_name_desc = "";
+	switch(true) {
+		case (tail_name == "ListDTO") :
+			tail_name_desc = "목록 ";
+			break;
+		case (tail_name == "CreateDTO") :
+			tail_name_desc = "생성 ";
+			break;			
+		case (tail_name == "UpdateDTO") :
+			tail_name_desc = "수정 ";
+			break;
+		default :
+			tail_name_desc = "";
+			break;	
+	}
+	
+	var existDataTime = existDateTimeField(columns);
+	var existValidNotNull =  existValidNotNullField(columns, tail_name);
+	var iFile = newFile("gen-sources/" + class_name + tail_name + ".java", "UTF-8");
+	
+	if(iFile.exist()) {
+		if(!promptQuestion("[" + tail_name + "] exist old file. overwrite?")){
+			exit();
+		}
+	}
+	// file stream open
+	var iOut = iFile.getOutputStream();	
+	
+	// package import
+	iOut.printf("package com.kyoborealco.kpmsn.dto;\n");
+	iOut.printf("\n");
+	if (existDataTime) {
+		iOut.printf("import java.time.LocalDateTime;\n");
+		iOut.printf("\n");	
+	}
+	if(existValidNotNull) {
+		iOut.printf("import javax.validation.constraints.NotNull;\n");
+		iOut.printf("\n");
+	}
+	iOut.printf("import lombok.Getter;\n");
+	iOut.printf("import lombok.NoArgsConstructor;\n");		
+	iOut.printf("import lombok.Setter;\n");
+	iOut.printf("import lombok.ToString;\n");		
+	iOut.printf("\n");
+	
+	// comment part
+	iOut.printf("/** \n");
+	iOut.printf(" * <pre> \n");
+	iOut.printf(" * %s %sDTO\n", entity_name, tail_name_desc);
+	iOut.printf(" * </pre> \n");
+	iOut.printf(" * \n");
+	iOut.printf(" */ \n");
+	
+	// Entity & Table annotation
+	iOut.printf("@Getter\n");
+	iOut.printf("@Setter\n");
+	iOut.printf("@ToString\n");
+	iOut.printf("@NoArgsConstructor\n");
+	
+	// start of class
+	iOut.printf("public class %s%s { \n", class_name, tail_name);
+	iOut.printf("\n");
+	
+	colums_size = columns.size();
+	//log("columns size ==> " + colums_size);
+	
+	// field
+	columns.each(function(it) {
+	
+		if(it.getUserProperty("enum-type")) {
+				
+			iOut.printf("\t/** %s */ \n", genFieldComment(it));
+			var gen_field_name = genFieldWithClass(it, class_name);
+			iOut.printf("%s \n", gen_field_name);
+				
+			iOut.printf("\n");
+					
+			iOut.printf("\t/** %s 타이틀*/ \n", genFieldComment(it));
+			var gen_field_name = genFieldWithClass4EnumTitle(it, class_name);
+			iOut.printf("%s \n", gen_field_name);
+			iOut.printf("\n");
+		} else {
+			if(it.get("is-foreign-key") == true) {
+										
+				var parentCols = null;
+				colRefs.each(function(colRef) {
+						
+					var child_col = colRef.get("child-column");
+					var parent_col = colRef.get("parent-column");
+						
+					if (it.get("physical-name") == child_col.get("physical-name")) {
+						var parent_table = parent_col.get("table");
+						parentCols = parent_table.select(function(p_col) {
+							return (p_col.get("is-primary-key") == true) || (p_col.getUserProperty("field-name") =="name"); 
+						});
+					}
+				});
+					
+				parentCols.each(function(p_col) {
+					if(p_col.get("is-primary-key") == true) {
+						//log(">>>>>>>>>" + class_name + "Id");
+						iOut.printf("\t/** %s */ \n", genFieldComment(it));
+						var gen_field_name = genField4FkId(it, colRefs);
+						iOut.printf("%s \n", gen_field_name);
+						iOut.printf("\n");
+					}
+								
+					if(p_col.getUserProperty("field-name") =="name") {
+						//log(">>>>>>>>>" + class_name + "Name");
+						iOut.printf("\t/** %s */ \n", genFieldComment(it).replace("UID", "명").replace("ID", "명"));					
+						var gen_field_name = genField4FkName(it, colRefs);
+						iOut.printf("%s \n", gen_field_name);
+						iOut.printf("\n");
+					}							
+				});
+					
+			} else {					
+				iOut.printf("\t/** %s */ \n", genFieldComment(it));
+				//var gen_valid_notnull = genValidationNotNull(it, tail_name);
+				//if(gen_valid_notnull) {
+				//	iOut.printf("\t%s\n", gen_valid_notnull);
+				//}				
+				var gen_field_name = genFieldWithClass(it, class_name);
+				iOut.printf("%s \n", gen_field_name);
+				iOut.printf("\n");
+			}
+		}
+	});
+	
+	// 생성자
+	iOut.printf("\t/** 생성자 */\n");
+	iOut.printf("\tpublic %s%s(\n", class_name, tail_name);
+	
+	var paramIndex = 0;
+	// 생성자 parameters
+	columns.each(function(it) {
+		paramIndex++;	
+		var paramField = null;
+		
+		if(it.getUserProperty("enum-type")) {
+				
+			paramField = genParamField4Enum(it);	
+			if (paramIndex == 1 ) {
+				iOut.printf("\t\t\t%s\n", paramField);						
+			} else {
+				iOut.printf("\t\t  , %s\n", paramField);
+			}
+									
+		} else {
+			if(it.get("is-foreign-key") == true) {
+										
+				var parentCols = null;
+				colRefs.each(function(colRef) {
+						
+					var child_col = colRef.get("child-column");
+					var parent_col = colRef.get("parent-column");
+						
+					if (it.get("physical-name") == child_col.get("physical-name")) {
+						var parent_table = parent_col.get("table");
+						parentCols = parent_table.select(function(p_col) {
+							return (p_col.get("is-primary-key") == true) || (p_col.getUserProperty("field-name") =="name"); 
+						});
+					}
+				});
+					
+				parentCols.each(function(p_col) {
+						
+					if(p_col.get("is-primary-key") == true) {
+						//log(">>>>>>>>>" + class_name + "Id");));
+						var paramField = genParamField4FkId(it, colRefs);
+						if (paramIndex == 1 ) {
+							iOut.printf("\t\t\t%s\n", paramField);						
+						} else {
+							iOut.printf("\t\t  , %s\n", paramField);
+						}
+					}
+															
+					if(p_col.getUserProperty("field-name") =="name") {
+						//log(">>>>>>>>>" + class_name + "Name");
+						var paramField = genParamField4FkName(it, colRefs);
+						if (paramIndex == 1 ) {
+							iOut.printf("\t\t\t%s\n", paramField);						
+						} else {
+							iOut.printf("\t\t  , %s\n", paramField);
+						}
+					}							
+				});
+					
+			} else {
+					
+				var paramField = genParamFieldWithClass(it, class_name);
+				if (paramIndex == 1 ) {
+					iOut.printf("\t\t\t%s\n", paramField);						
+				} else {
+					iOut.printf("\t\t  , %s\n", paramField);
+				}
+			}
+		}		
+	});
+	
+	iOut.printf("\t\t) {\n");
+	iOut.printf("\t\tsuper();\n");
+	
+	// 생성자 초기값 할당
+	columns.each(function(it) {
+	
+		if(it.getUserProperty("enum-type")) {
+					
+			var gen_enum_name = genConsInitWithClass(it, class_name);
+			iOut.printf("\t\tthis.%s = %s.getCode();\n", gen_enum_name, gen_enum_name);
+					
+			var gen_enum_title = genConsInitWithClass4EnumTitle(it, class_name);
+			iOut.printf("\t\tthis.%s = %s.getTitle();\n", gen_enum_title, gen_enum_name);
+	
+		} else {
+			if(it.get("is-foreign-key") == true) {
+										
+				var parentCols = null;
+				colRefs.each(function(colRef) {
+						
+					var child_col = colRef.get("child-column");
+					var parent_col = colRef.get("parent-column");
+						
+					if (it.get("physical-name") == child_col.get("physical-name")) {
+						var parent_table = parent_col.get("table");
+						parentCols = parent_table.select(function(p_col) {
+							return (p_col.get("is-primary-key") == true) || (p_col.getUserProperty("field-name") =="name"); 
+						});
+					}
+				});
+					
+				parentCols.each(function(p_col) {
+					if(p_col.get("is-primary-key") == true) {
+						//log(">>>>>>>>>" + class_name + "Id");
+						var gen_field_name = genConsInit4FkId(it, colRefs);
+						iOut.printf("\t\tthis.%s = %s;\n", gen_field_name, gen_field_name);
+					}
+								
+					if(p_col.getUserProperty("field-name") =="name") {
+						//log(">>>>>>>>>" + class_name + "Name");					
+						var gen_field_name = genConsInit4FkName(it, colRefs);
+						iOut.printf("\t\tthis.%s = %s;\n", gen_field_name, gen_field_name);
+					}							
+				});
+					
+			} else {
+					
+				var gen_field_name = genConsInitWithClass(it, class_name);
+				iOut.printf("\t\tthis.%s = %s;\n", gen_field_name, gen_field_name);
+			}
+		}	
+	});
+	
+	// end of 생성자
+	iOut.printf("\t}\n");
+	
+	// end of class
+	iOut.printf("} \n");
+	
+	// file stream close
+	iOut.close();	
+
+}
+
+var genRepository = function() {
+	
+	var pkDataType = "Long";
+	if (pks.size() > 1) {
+		pkDataType = class_name + "Pk";
+	} else {
+		pks.each(function(pkCol){
+			pkDataType = genType(pkCol);
+		});
+	}
+		
+    var iFile = newFile("gen-sources/" + class_name + "Repository.java", "UTF-8");
+	
+	if(iFile.exist()) {
+		if(!promptQuestion("[Repository] exist old file. overwrite?")){
+			exit();
+		}
+	}
+		
+	// file stream open()
+	var iOut = iFile.getOutputStream();
+		
+	// package import
+	iOut.printf("package com.kyoborealco.kpmsn.repository;\n");
+	iOut.printf("\n");
+	iOut.printf("import org.springframework.data.jpa.repository.JpaRepository;\n");
+	iOut.printf("import org.springframework.stereotype.Repository;\n");
+	iOut.printf("\n");
+	
+	iOut.printf("@Repository \n");
+	// start of repository interface
+	iOut.printf("public interface %sRepository extends JpaRepository<%s, %s>, %sRepositoryExt { \n", class_name, class_name, pkDataType, class_name);
+	iOut.printf("\n");
+	// end of class
+	iOut.printf("} \n");
+		
+	// file stream close
+	iOut.close();	
+}
+
+var genRepositoryExt = function() {
+
+	var pkDataType = "Long";
+	if (pks.size() > 1) {
+		pkDataType = class_name + "Pk";
+	} else {
+		pks.each(function(pkCol){
+			pkDataType = genType(pkCol);
+		});
+	}
+	
+	var iFile = newFile("gen-sources/" + class_name + "RepositoryExt.java", "UTF-8");
+	
+	if(iFile.exist()) {
+		if(!promptQuestion("[RepositoryExt] exist old file. overwrite?")){
+			exit();
+		}
+	}
+	
+	// file stream open()
+	var iOut = iFile.getOutputStream();
+	
+	// package import
+	iOut.printf("package com.kyoborealco.kpmsn.repository;\n");
+	iOut.printf("\n");
+	iOut.printf("import java.util.List;\n");
+	iOut.printf("\n");
+	iOut.printf("import org.springframework.data.domain.Page;\n");
+	iOut.printf("import org.springframework.data.domain.Pageable;\n");
+	iOut.printf("\n");
+	iOut.printf("//import com.kyoborealco.kpmsn.dto.%sDTO;\n", class_name);
+	iOut.printf("//import com.kyoborealco.kpmsn.dto.%sListDTO;\n", class_name);
+	iOut.printf("\n");
+	
+	// start of repositoryext interface
+	iOut.printf("public interface %sRepositoryExt { \n", class_name);
+	iOut.printf("\n");
+	
+	iOut.printf("\t/**\n");
+	iOut.printf("\t * %s 조회\n", entity_name);
+	iOut.printf("\t *\n");
+	iOut.printf("\t * @param %sId\n", lowerCaseNaming(class_name));
+	iOut.printf("\t * @return\n");
+	iOut.printf("\t */\n");
+	iOut.printf("\t%sDTO find%s(%s %sId);\n", class_name, class_name, pkDataType, lowerCaseNaming(class_name));
+	iOut.printf("\n");
+	
+	iOut.printf("\t/**\n");
+	iOut.printf("\t * %s목록 조회\n", entity_name);
+	iOut.printf("\t *\n");
+	
+	optionColumns.each(function(col) {
+		var optionName = genParamNameWithClass(col, class_name)
+		iOut.printf("\t * @param %s\n", optionName);				
+	});
+	
+	iOut.printf("\t * @return\n");
+	iOut.printf("\t */\n");
+	iOut.printf("\tList<%sListDTO> search%s(\n", class_name, class_name);
+	
+	var optionIndex = 0;
+	optionColumns.each(function(col) {
+		optionIndex++;
+		//log("option => " + col.get("physical-name") + " : " + genType(col.get("data-type")));
+		var optionField = genParamFieldWithClass(col, class_name)
+	
+		if (optionIndex == 1) {
+			iOut.printf("\t\t\t  %s\n", optionField);
+		} else {
+			iOut.printf("\t\t\t, %s\n", optionField);				
+		}
+	});
+			
+	iOut.printf("\t\t);\n");
+	iOut.printf("\n");
+	
+	iOut.printf("\t/**\n");
+	iOut.printf("\t * %s목록 조회 + paging\n", entity_name);
+	iOut.printf("\t *\n");
+	optionColumns.each(function(col) {
+		var optionName = genParamNameWithClass(col, class_name)
+		iOut.printf("\t * @param %s\n", optionName);				
+	});
+	iOut.printf("\t * @param pageable\n"); 		
+	iOut.printf("\t * @return\n");
+	iOut.printf("\t */\n");
+	iOut.printf("\tPage<%sListDTO> searchPage%s(\n", class_name, class_name);
+			
+	optionIndex = 0;
+	optionColumns.each(function(col) {
+		optionIndex++;
+		//log("option => " + col.get("physical-name") + " : " + genType(col.get("data-type")));
+		var optionField = genParamFieldWithClass(col, class_name)
+	
+		if (optionIndex == 1) {
+			iOut.printf("\t\t\t  %s\n", optionField);
+		} else {
+			iOut.printf("\t\t\t, %s\n", optionField);				
+		}
+	});
+	iOut.printf("\t\t\t, Pageable pageable\n");
+			
+	iOut.printf("\t\t);\n");
+	
+	iOut.printf("\n");
+	
+	
+	// end of class
+	iOut.printf("} \n");
+	
+	// file stream close
+	iOut.close();
+
+}
+
+var genRepositoryImpl = function() {
+
+	var pkDataType = "Long";
+	if (pks.size() > 1) {
+		pkDataType = class_name + "Pk";
+	} else {
+		pks.each(function(pkCol){
+			pkDataType = genType(pkCol);
+		});
+	}
+	
+	var iFile = newFile("gen-sources/" + class_name + "RepositoryImpl.java", "UTF-8");
+	
+	if(iFile.exist()) {
+		if(!promptQuestion("[RepositoryImpl] exist old file. overwrite?")){
+			exit();
+		}
+	}
+	
+	// file stream open()
+	var iOut = iFile.getOutputStream();
+	
+	// package import
+	iOut.printf("package com.kyoborealco.kpmsn.repository;\n");
+	iOut.printf("\n");
+	iOut.printf("import java.util.List;\n");
+	iOut.printf("\n");
+	
+	iOut.printf("import org.springframework.data.domain.Page;\n");
+	iOut.printf("import org.springframework.data.domain.PageImpl;\n");
+	iOut.printf("import org.springframework.data.domain.Pageable;\n");
+	iOut.printf("import org.springframework.util.StringUtils;\n");
+	iOut.printf("\n");
+	
+	iOut.printf("//import com.kyoborealco.kpmsn.dto.%sDTO;\n", class_name);
+	iOut.printf("//import com.kyoborealco.kpmsn.dto.%sListDTO;\n", class_name);
+	iOut.printf("\n");
+	
+	iOut.printf("import lombok.RequiredArgsConstructor;\n");
+	iOut.printf("import lombok.extern.slf4j.Slf4j;\n");
+	iOut.printf("\n");
+	
+	// start of repositoryimpl class
+	iOut.printf("@Slf4j\n");
+	iOut.printf("@RequiredArgsConstructor\n");
+	iOut.printf("public class %sRepositoryImpl implements %sRepositoryExt { \n", class_name, class_name);
+	iOut.printf("\n");
+	iOut.printf("\t// QueryFactory DI\n");
+	iOut.printf("\tprivate final JPAQueryFactory query;\n");
+	iOut.printf("\n");
+	
+	//////////////////////////////////////////////
+	// find 메소드
+	//////////////////////////////////////////////
+	iOut.printf("\t@Override\n");
+	iOut.printf("\tpublic %sDTO find%s(%s %sId) {\n", class_name, class_name, pkDataType, lowerCaseNaming(class_name));
+	iOut.printf("\n");
+	
+	iOut.printf("\t\t// Q객체\n");
+	iOut.printf("\t\tQ%s q%s = Q%s.%s;\n", class_name, class_name, class_name, lowerCaseNaming(class_name));
+	
+	// Q 객체
+	columns.each(function(it) {
+	
+		var fieldName = it.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = lowerCaseNaming(it.get("physical-name").replace('_', ''));
+		}
+	
+		if(it.get("is-foreign-key") == true) {
+	
+			colRefs.each(function(colRef) {
+		
+				var child_col = colRef.get("child-column");
+				var parent_col = colRef.get("parent-column");
+		
+				if (it.get("physical-name") == child_col.get("physical-name")) {
+					var parent_table = parent_col.get("table");
+					var parent_class_name = parent_table.getUserProperty("class-name");
+						
+					if(parent_class_name) {
+					} else {
+						parent_class_name = parent_table.get("physical-name");
+					}
+						
+					if (class_name == parent_class_name) {
+						iOut.printf("\t\tQ%s q%s = new Q%s(\"%s\");\n", parent_class_name, upperCaseNaming(fieldName), parent_class_name, lowerCaseNaming(fieldName));	
+					} else {
+						iOut.printf("\t\tQ%s q%s = Q%s.%s;\n", parent_class_name, parent_class_name, parent_class_name, lowerCaseNaming(parent_class_name));								
+					}
+				}
+			});
+		}
+	});
+	
+	iOut.printf("\n");
+	iOut.printf("\t\t// where 절\n");
+	iOut.printf("\t\tBooleanBuilder builder = new BooleanBuilder();\n");
+	iOut.printf("\t\tbuilder.and(q%s.id.eq(%sId));\n", class_name, lowerCaseNaming(class_name));
+	iOut.printf("\n");
+	
+	iOut.printf("\t\t%sDTO dto\n", class_name);
+	iOut.printf("\t\t\t= query.select(Projections.constructor(%sDTO.class\n", class_name);
+	
+	// 생성자 param
+	columns.each(function(it) {
+	
+		var fieldName = it.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = lowerCaseNaming(it.get("physical-name").replace('_', ''));	
+		}
+	
+		if(it.getUserProperty("enum-type")) {
+					
+			iOut.printf("\t\t\t\t, q%s.%s\n", class_name, fieldName);				
+		} else {
+			if(it.get("is-foreign-key") == true) {
+										
+				var parentCols = null;
+				var parent_class_name = null;
+				colRefs.each(function(colRef) {
+					
+					var child_col = colRef.get("child-column");
+					var parent_col = colRef.get("parent-column");
+					
+					if (it.get("physical-name") == child_col.get("physical-name")) {
+						var parent_table = parent_col.get("table");
+						parent_class_name = parent_table.getUserProperty("class-name");
+					
+						if(parent_class_name) {
+						} else {
+							parent_class_name = parent_table.get("physical-name");
+						}
+					
+						parentCols = parent_table.select(function(p_col) {
+							return (p_col.get("is-primary-key") == true) || (p_col.getUserProperty("field-name") =="name"); 
+						});
+					}
+				});
+				
+				parentCols.each(function(p_col) {
+					if(p_col.get("is-primary-key") == true) {
+						var parent_field_name = p_col.getUserProperty("field-name");
+						if(parent_field_name) {
+						} else {
+							parent_field_name = lowerCaseNaming(p_col.get("physical-name").replace('_', ''));	
+						}
+						
+						if (class_name == parent_class_name) {
+							iOut.printf("\t\t\t\t, q%s.%s\n", upperCaseNaming(fieldName), parent_field_name);
+						} else {
+							iOut.printf("\t\t\t\t, q%s.%s\n", parent_class_name, parent_field_name);									
+						}
+						
+					}
+							
+					if(p_col.getUserProperty("field-name") =="name") {
+						var parent_field_name = p_col.getUserProperty("field-name");
+						if(parent_field_name) {
+						} else {
+							parent_field_name = lowerCaseNaming(p_col.get("physical-name").replace('_', ''));	
+						}
+						
+						if (class_name == parent_class_name) {
+							iOut.printf("\t\t\t\t, q%s.%s\n", upperCaseNaming(fieldName), parent_field_name);
+						} else {
+							iOut.printf("\t\t\t\t, q%s.%s\n", parent_class_name, parent_field_name);									
+						}
+					}							
+				});
+				
+			} else {
+				
+				iOut.printf("\t\t\t\t, q%s.%s\n", class_name, fieldName);
+			}
+		}	
+	});
+	
+	iOut.printf("\t\t\t))\n", class_name);		
+	iOut.printf("\t\t.from(q%s)\n", class_name);
+	
+	// Join
+	columns.each(function(it) {
+	
+		var fieldName = it.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = it.get("physical-name").replace('_', '');	
+		}
+	
+		if(it.get("is-foreign-key") == true) {
+	
+			colRefs.each(function(colRef) {
+		
+				var child_col = colRef.get("child-column");
+				var parent_col = colRef.get("parent-column");
+	
+				if (it.get("physical-name") == child_col.get("physical-name")) {
+					var parent_table = parent_col.get("table");
+					var parent_class_name = parent_table.getUserProperty("class-name");
+					
+					if(parent_class_name) {
+					} else {
+						parent_class_name = parent_table.get("physical-name");
+					}
+					
+					if (class_name == parent_class_name) {
+						iOut.printf("\t\t.leftJoin(q%s.%s, q%s)\n", class_name, lowerCaseNaming(fieldName), upperCaseNaming(fieldName));	
+					} else {
+						iOut.printf("\t\t.leftJoin(q%s.%s, q%s)\n", class_name, lowerCaseNaming(fieldName), parent_class_name);								
+					}
+				}
+			});
+		}
+	});		
+	iOut.printf("\t\t.where(builder)\n");
+	iOut.printf("\t\t.fetchOne();\n");
+	iOut.printf("\n");
+	
+	iOut.printf("\t\treturn dto;\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+	
+	//////////////////////////////////////////////
+	// search 메소드
+	//////////////////////////////////////////////
+	iOut.printf("\t@Override\n");
+	iOut.printf("\tpublic List<%sListDTO> search%s(\n", class_name, class_name);
+	
+	var optionIndex = 0;
+	optionColumns.each(function(col) {
+		optionIndex++;
+		//log("option => " + col.get("physical-name") + " : " + genType(col.get("data-type")));
+		var optionField = genParamFieldWithClass(col, class_name)
+	
+		if (optionIndex == 1) {
+			iOut.printf("\t\t\t  %s\n", optionField);
+		} else {
+			iOut.printf("\t\t\t, %s\n", optionField);				
+		}
+	});
+			
+	iOut.printf("\t\t) {\n");
+	iOut.printf("\n");
+	
+	iOut.printf("\t\t// Q객체\n");
+	iOut.printf("\t\tQ%s q%s = Q%s.%s;\n", class_name, class_name, class_name, lowerCaseNaming(class_name));
+	
+	// Q 객체
+	columns.each(function(it) {
+	
+		var fieldName = it.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = it.get("physical-name").replace('_', '');	
+		}
+	
+		if(it.get("is-foreign-key") == true) {
+	
+			colRefs.each(function(colRef) {
+		
+				var child_col = colRef.get("child-column");
+				var parent_col = colRef.get("parent-column");
+		
+				if (it.get("physical-name") == child_col.get("physical-name")) {
+					var parent_table = parent_col.get("table");
+					var parent_class_name = parent_table.getUserProperty("class-name");
+						
+					if(parent_class_name) {
+					} else {
+						parent_class_name = parent_table.get("physical-name");
+					}
+						
+					if (class_name == parent_class_name) {
+						iOut.printf("\t\tQ%s q%s = new Q%s(\"%s\");\n", parent_class_name, upperCaseNaming(fieldName), parent_class_name, lowerCaseNaming(fieldName));	
+					} else {
+						iOut.printf("\t\tQ%s q%s = Q%s.%s;\n", parent_class_name, parent_class_name, parent_class_name, lowerCaseNaming(parent_class_name));								
+					}
+				}
+			});
+		}
+	});
+	
+	iOut.printf("\n");
+	iOut.printf("\t\t// where 절\n");
+	iOut.printf("\t\tBooleanBuilder builder = new BooleanBuilder();\n");
+	//iOut.printf("\t\tbuilder.and(q%s.id.eq(%sId));\n", class_name, lowerCaseNaming(class_name));
+	
+	optionColumns.each(function(col) {
+		
+		var optionName = genParamNameWithClass(col, class_name)
+		var columnName = lowerCaseNaming(col.get("physical-name"));
+		var fieldName = col.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = columnName;
+		}
+		
+		var optionType = genType(col);
+		if (optionType == "String") {
+			
+			var domain_name = col.get("domain").get("name");
+			
+			iOut.printf("\t\tif (StringUtils.hasText(%s)) {\n", optionName);
+			if (domain_name == "여부") {
+				iOut.printf("\t\t\tbuilder.and(q%s.%s.eq(%s));\n", class_name, fieldName, optionName);					
+			} else {
+				iOut.printf("\t\t\tbuilder.and(q%s.%s.contains(%s));\n", class_name, fieldName, optionName);					
+			}
+			iOut.printf("\t\t}\n");
+		} else {
+			iOut.printf("\t\tif (%s != null) {\n", optionName);
+			iOut.printf("\t\t\tbuilder.and(q%s.%s.eq(%s));\n", class_name, fieldName, optionName);
+			iOut.printf("\t\t}\n");				
+		}
+	});
+	iOut.printf("\n");
+	
+	iOut.printf("\t\tList<%sListDTO> list\n", class_name);
+	iOut.printf("\t\t\t= query.select(Projections.constructor(%sListDTO.class\n", class_name);
+	
+	// 생성자 param
+	columns.each(function(it) {
+	
+		var fieldName = it.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = lowerCaseNaming(it.get("physical-name").replace('_', ''));	
+		}
+	
+		if(it.getUserProperty("enum-type")) {
+					
+			iOut.printf("\t\t\t\t, q%s.%s\n", class_name, fieldName);
+				
+		} else {
+			if(it.get("is-foreign-key") == true) {
+								
+				var parentCols = null;
+				var parent_class_name = null;
+				colRefs.each(function(colRef) {
+					
+					var child_col = colRef.get("child-column");
+					var parent_col = colRef.get("parent-column");
+					
+					if (it.get("physical-name") == child_col.get("physical-name")) {
+						var parent_table = parent_col.get("table");
+						parent_class_name = parent_table.getUserProperty("class-name");
+					
+						if(parent_class_name) {
+						} else {
+							parent_class_name = parent_table.get("physical-name");
+						}
+					
+						parentCols = parent_table.select(function(p_col) {
+							return (p_col.get("is-primary-key") == true) || (p_col.getUserProperty("field-name") =="name"); 
+						});
+					}
+				});
+				
+				parentCols.each(function(p_col) {
+					if(p_col.get("is-primary-key") == true) {
+						var parent_field_name = p_col.getUserProperty("field-name");
+						if(parent_field_name) {
+						} else {
+							parent_field_name = lowerCaseNaming(p_col.get("physical-name").replace('_', ''));	
+						}
+						
+						if (class_name == parent_class_name) {
+							iOut.printf("\t\t\t\t, q%s.%s\n", upperCaseNaming(fieldName), parent_field_name);
+						} else {
+							iOut.printf("\t\t\t\t, q%s.%s\n", parent_class_name, parent_field_name);									
+						}							
+					}
+							
+					if(p_col.getUserProperty("field-name") =="name") {
+						var parent_field_name = p_col.getUserProperty("field-name");
+						if(parent_field_name) {
+						} else {
+							parent_field_name = lowerCaseNaming(p_col.get("physical-name").replace('_', ''));	
+						}
+						
+						if (class_name == parent_class_name) {
+							iOut.printf("\t\t\t\t, q%s.%s\n", upperCaseNaming(fieldName), parent_field_name);
+						} else {
+							iOut.printf("\t\t\t\t, q%s.%s\n", parent_class_name, parent_field_name);									
+						}
+					}							
+				});
+				
+			} else {
+				
+				iOut.printf("\t\t\t\t, q%s.%s\n", class_name, fieldName);
+			}
+		}
+	});
+	
+	iOut.printf("\t\t\t))\n", class_name);		
+	iOut.printf("\t\t.from(q%s)\n", class_name);
+	
+	// Join
+	columns.each(function(it) {
+	
+		var fieldName = it.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = it.get("physical-name").replace('_', '');	
+		}
+	
+		if(it.get("is-foreign-key") == true) {
+
+			colRefs.each(function(colRef) {
+
+				var child_col = colRef.get("child-column");
+				var parent_col = colRef.get("parent-column");
+	
+				if (it.get("physical-name") == child_col.get("physical-name")) {
+					var parent_table = parent_col.get("table");
+					var parent_class_name = parent_table.getUserProperty("class-name");
+					
+					if(parent_class_name) {
+					} else {
+						parent_class_name = parent_table.get("physical-name");
+					}
+					
+					if (class_name == parent_class_name) {
+						iOut.printf("\t\t.leftJoin(q%s.%s, q%s)\n", class_name, lowerCaseNaming(fieldName), upperCaseNaming(fieldName));	
+					} else {
+						iOut.printf("\t\t.leftJoin(q%s.%s, q%s)\n", class_name, lowerCaseNaming(fieldName), parent_class_name);								
+					}
+				}
+			});
+		}
+	});		
+	iOut.printf("\t\t.where(builder)\n");
+	iOut.printf("\t\t.fetch();\n");
+	iOut.printf("\n");
+	
+	iOut.printf("\t\treturn list;\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+	
+	//////////////////////////////////////////////
+	// searchPage 메소드
+	//////////////////////////////////////////////
+	iOut.printf("\t@Override\n");
+	iOut.printf("\tpublic Page<%sListDTO> searchPage%s(\n", class_name, class_name);
+	
+	var optionIndex = 0;
+	optionColumns.each(function(col) {
+		optionIndex++;
+		//log("option => " + col.get("physical-name") + " : " + genType(col.get("data-type")));
+		var optionField = genParamFieldWithClass(col, class_name)
+	
+		if (optionIndex == 1) {
+			iOut.printf("\t\t\t  %s\n", optionField);
+		} else {
+			iOut.printf("\t\t\t, %s\n", optionField);				
+		}
+	});
+	iOut.printf("\t\t\t, Pageable pageable\n");
+			
+	iOut.printf("\t\t) {\n");
+	iOut.printf("\n");
+	
+	iOut.printf("\t\t// Q객체\n");
+	iOut.printf("\t\tQ%s q%s = Q%s.%s;\n", class_name, class_name, class_name, lowerCaseNaming(class_name));
+	
+	// Q 객체
+	columns.each(function(it) {
+	
+		var fieldName = it.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = it.get("physical-name").replace('_', '');	
+		}
+	
+		if(it.get("is-foreign-key") == true) {
+	
+			colRefs.each(function(colRef) {
+	
+				var child_col = colRef.get("child-column");
+				var parent_col = colRef.get("parent-column");
+	
+				if (it.get("physical-name") == child_col.get("physical-name")) {
+					var parent_table = parent_col.get("table");
+					var parent_class_name = parent_table.getUserProperty("class-name");
+					
+					if(parent_class_name) {
+					} else {
+						parent_class_name = parent_table.get("physical-name");
+					}
+					
+					if (class_name == parent_class_name) {
+						iOut.printf("\t\tQ%s q%s = new Q%s(\"%s\");\n", parent_class_name, upperCaseNaming(fieldName), parent_class_name, lowerCaseNaming(fieldName));	
+					} else {
+						iOut.printf("\t\tQ%s q%s = Q%s.%s;\n", parent_class_name, parent_class_name, parent_class_name, lowerCaseNaming(parent_class_name));								
+					}
+				}
+			});
+		}
+	});
+	
+	iOut.printf("\n");
+	iOut.printf("\t\t// where 절\n");
+	iOut.printf("\t\tBooleanBuilder builder = new BooleanBuilder();\n");
+	//iOut.printf("\t\tbuilder.and(q%s.id.eq(%sId));\n", class_name, lowerCaseNaming(class_name));
+	
+	optionColumns.each(function(col) {
+		
+		var optionName = genParamNameWithClass(col, class_name)
+		var columnName = lowerCaseNaming(col.get("physical-name"));
+		var fieldName = col.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = columnName;
+		}
+		
+		var optionType = genType(col);
+		if (optionType == "String") {
+			
+			var domain_name = col.get("domain").get("name");
+			
+			iOut.printf("\t\tif (StringUtils.hasText(%s)) {\n", optionName);
+			if (domain_name == "여부") {
+				iOut.printf("\t\t\tbuilder.and(q%s.%s.eq(%s));\n", class_name, fieldName, optionName);					
+			} else {
+				iOut.printf("\t\t\tbuilder.and(q%s.%s.contains(%s));\n", class_name, fieldName, optionName);					
+			}
+			iOut.printf("\t\t}\n");
+		} else {
+			iOut.printf("\t\tif (%s != null) {\n", optionName);
+			iOut.printf("\t\t\tbuilder.and(q%s.%s.eq(%s));\n", class_name, fieldName, optionName);
+			iOut.printf("\t\t}\n");				
+		}
+	});
+	
+	iOut.printf("\n");
+	iOut.printf("\t\t// count\n");
+	
+	iOut.printf("\t\tLong totalCount\n");		
+	iOut.printf("\t\t\t= query.select(Expressions.asNumber(1).count())\n");
+	iOut.printf("\t\t.from(q%s)\n", class_name);
+	
+	// Join
+	columns.each(function(it) {
+	
+		var fieldName = it.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = it.get("physical-name").replace('_', '');	
+		}
+	
+		if(it.get("is-foreign-key") == true) {
+
+			colRefs.each(function(colRef) {
+	
+				var child_col = colRef.get("child-column");
+				var parent_col = colRef.get("parent-column");
+	
+				if (it.get("physical-name") == child_col.get("physical-name")) {
+					var parent_table = parent_col.get("table");
+					var parent_class_name = parent_table.getUserProperty("class-name");
+					
+					if(parent_class_name) {
+					} else {
+						parent_class_name = parent_table.get("physical-name");
+					}
+					
+					if (class_name == parent_class_name) {
+						iOut.printf("\t\t.leftJoin(q%s.%s, q%s)\n", class_name, lowerCaseNaming(fieldName), upperCaseNaming(fieldName));	
+					} else {
+						iOut.printf("\t\t.leftJoin(q%s.%s, q%s)\n", class_name, lowerCaseNaming(fieldName), parent_class_name);								
+					}
+				}
+			});
+		}
+	});		
+	iOut.printf("\t\t.where(builder)\n");
+	iOut.printf("\t\t.fetchOne();\n");
+	
+	iOut.printf("\n");	
+	iOut.printf("\t\t// page results\n");
+	
+	iOut.printf("\t\tList<%sListDTO> list\n", class_name);
+	iOut.printf("\t\t\t= query.select(Projections.constructor(%sListDTO.class\n", class_name);
+	
+	// 생성자 param
+	columns.each(function(it) {
+	
+		var fieldName = it.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = lowerCaseNaming(it.get("physical-name").replace('_', ''));	
+		}
+
+		if(it.getUserProperty("enum-type")) {
+				
+			iOut.printf("\t\t\t\t, q%s.%s\n", class_name, fieldName);
+			
+		} else {
+			if(it.get("is-foreign-key") == true) {
+									
+				var parentCols = null;
+				var parent_class_name = null;
+				colRefs.each(function(colRef) {
+					
+					var child_col = colRef.get("child-column");
+					var parent_col = colRef.get("parent-column");
+					
+					if (it.get("physical-name") == child_col.get("physical-name")) {
+						var parent_table = parent_col.get("table");
+						parent_class_name = parent_table.getUserProperty("class-name");
+					
+						if(parent_class_name) {
+						} else {
+							parent_class_name = parent_table.get("physical-name");
+						}
+					
+						parentCols = parent_table.select(function(p_col) {
+							return (p_col.get("is-primary-key") == true) || (p_col.getUserProperty("field-name") =="name"); 
+						});
+					}
+				});
+				
+				parentCols.each(function(p_col) {
+					if(p_col.get("is-primary-key") == true) {
+						var parent_field_name = p_col.getUserProperty("field-name");
+						if(parent_field_name) {
+						} else {
+							parent_field_name = lowerCaseNaming(p_col.get("physical-name").replace('_', ''));	
+						}
+						
+						if (class_name == parent_class_name) {
+							iOut.printf("\t\t\t\t, q%s.%s\n", upperCaseNaming(fieldName), parent_field_name);
+						} else {
+							iOut.printf("\t\t\t\t, q%s.%s\n", parent_class_name, parent_field_name);									
+						}
+					}
+							
+					if(p_col.getUserProperty("field-name") =="name") {
+						var parent_field_name = p_col.getUserProperty("field-name");
+						if(parent_field_name) {
+						} else {
+							parent_field_name = lowerCaseNaming(p_col.get("physical-name").replace('_', ''));	
+						}
+						
+						if (class_name == parent_class_name) {
+							iOut.printf("\t\t\t\t, q%s.%s\n", upperCaseNaming(fieldName), parent_field_name);
+						} else {
+							iOut.printf("\t\t\t\t, q%s.%s\n", parent_class_name, parent_field_name);									
+						}
+					}							
+				});
+				
+			} else {
+				
+				iOut.printf("\t\t\t\t, q%s.%s\n", class_name, fieldName);
+			}
+		}
+	});
+	
+	iOut.printf("\t\t\t))\n", class_name);		
+	iOut.printf("\t\t.from(q%s)\n", class_name);
+	
+	// Join
+	columns.each(function(it) {
+	
+		var fieldName = it.getUserProperty("field-name");
+		if(!fieldName) {
+			fieldName = it.get("physical-name").replace('_', '');	
+		}
+	
+		if(it.get("is-foreign-key") == true) {
+
+			colRefs.each(function(colRef) {
+	
+				var child_col = colRef.get("child-column");
+				var parent_col = colRef.get("parent-column");
+	
+				if (it.get("physical-name") == child_col.get("physical-name")) {
+					var parent_table = parent_col.get("table");
+					var parent_class_name = parent_table.getUserProperty("class-name");
+					
+					if(parent_class_name) {
+					} else {
+						parent_class_name = parent_table.get("physical-name");
+					}
+					
+					if (class_name == parent_class_name) {
+						iOut.printf("\t\t.leftJoin(q%s.%s, q%s)\n", class_name, lowerCaseNaming(fieldName), upperCaseNaming(fieldName));	
+					} else {
+						iOut.printf("\t\t.leftJoin(q%s.%s, q%s)\n", class_name, lowerCaseNaming(fieldName), parent_class_name);								
+					}
+				}
+			});
+		}
+	});		
+	iOut.printf("\t\t.where(builder)\n");
+	iOut.printf("\t\t.offset(pageable.getOffset())\n");
+	iOut.printf("\t\t.limit(pageable.getPageSize())\n");
+	iOut.printf("\t\t.fetch();\n");
+	iOut.printf("\n");
+	
+	iOut.printf("\t\treturn new PageImpl<>(list, pageable, totalCount);\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+	
+	// end of class
+	iOut.printf("} \n");
+	
+	// file stream close
+	iOut.close();
+
+}
+
+var genCriteria = function() {
+		
+	var iFile = newFile("gen-sources/" + class_name + "Criteria.java", "UTF-8");
+	
+	if(iFile.exist()) {
+		if(!promptQuestion("[Criteria] exist old file. overwrite?")){
+			exit();
+		}
+	}
+	// file stream open
+	var iOut = iFile.getOutputStream();
+
+	// package & import
+	iOut.printf("package com.kyoborealco.kpmsn.criteria;\n");
+	iOut.printf("\n");
+	iOut.printf("import lombok.Getter;\n");
+	iOut.printf("import lombok.Setter;\n");
+	iOut.printf("\n");
+
+	// start : criterial class
+	iOut.printf("@Getter\n");
+	iOut.printf("@Setter\n");
+	iOut.printf("public class %sCriteria extends BaseCriteria implements Criteria { \n", class_name);
+	iOut.printf("\n");
+
+	optionColumns.each(function(col) {
+		// log("▶▶▶▶▶ col => " + col.getUserProperty("field-name"));
+		iOut.printf("\t/** %s */;\n", genFieldComment(col));
+		iOut.printf("\tprivate %s %s;\n", genType(col), genFieldName(col));
+		iOut.printf("\n");
+	});
+
+	// end of class
+	iOut.printf("} \n");
+					
+	// file stream close
+	iOut.close();
+}
+
+var genMapper = function() {
+
+	var iFile = newFile("gen-sources/" + class_name + "Mapper.java", "UTF-8");
+	
+	if(iFile.exist()) {
+		if(!promptQuestion("[Mapper] exist old file. overwrite?")){
+			exit();
+		}
+	}
+	// file stream open
+	var iOut = iFile.getOutputStream();
+
+	// package & import
+	iOut.printf("package com.kyoborealco.kpmsn.mapper;\n");
+	iOut.printf("\n");
+	iOut.printf("import org.springframework.stereotype.Component;\n");
+	iOut.printf("\n");
+	iOut.printf("//import com.kyoborealco.kpmsn.dto.%sDTO;\n", class_name);
+	iOut.printf("//import com.kyoborealco.kpmsn.entity.%s;\n", class_name);
+	iOut.printf("\n");
+	iOut.printf("import lombok.extern.slf4j.Slf4j;\n");
+	iOut.printf("\n");
+	
+	// start : mapper class
+	iOut.printf("@Slf4j\n");
+    iOut.printf("@Component\n");
+	iOut.printf("public class %sMapper {\n", class_name);
+	iOut.printf("\n");
+	
+	iOut.printf("\tpublic %s toEntity(%sDTO dto) {\n", class_name, class_name);
+	iOut.printf("\t\tif (dto == null) {\n");
+	iOut.printf("\t\t\treturn null;\n");
+	iOut.printf("\t\t} else {\n");
+	iOut.printf("\t\t\t%s entity = new %s();\n", class_name, class_name);
+	iOut.printf("\n");
+	
+	columns.each(function(col) {
+		
+		if(col.get("is-primary-key") == true) {
+			var domain = col.get("domain").get("name");
+			if (domain != "UUID" && domain != "ID" && domain != "순번") { 
+				iOut.printf("\t\t\tentity.set%s(dto.get%s());\n", upperCaseNaming(genFieldValue(col)), upperCaseNaming(genFieldName(col)));
+			}
+		} else if (col.get("is-foreign-key") == true) {
+			//iOut.printf("\t\t\t fk -> %s;\n", col.get("physical-name"));
+			//log("fk -> " + col.getUserProperty("field-name"));			
+		} else {
+			var enum_type = col.getUserProperty("enum-type")
+			if(enum_type != null) {
+				iOut.printf("\t\t\tentity.set%s(%s.valueOf(dto.get%s()));\n", 
+					upperCaseNaming(genFieldValue(col)), upperCaseNaming(enum_type), upperCaseNaming(genFieldName(col)));								
+			} else {
+				iOut.printf("\t\t\tentity.set%s(dto.get%s());\n", upperCaseNaming(genFieldValue(col)), upperCaseNaming(genFieldName(col)));
+			}			
+		}
+		
+	});
+	
+	iOut.printf("\n");	
+	iOut.printf("\t\t\treturn entity;\n");
+	iOut.printf("\t\t}\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+	
+	iOut.printf("\tpublic void toEntity(%sDTO dto, %s entity) {\n", class_name, class_name);
+	iOut.printf("\t\tif (dto == null || entity == null) {\n");
+	iOut.printf("\t\t\tlog.error(\"▶▶▶▶▶ mapper error !!\");\n");
+	iOut.printf("\t\t} else {\n");
+	
+	columns.each(function(col) {
+		
+		if(col.get("is-primary-key") == true) {
+			var domain = col.get("domain").get("name");
+			if (domain != "UUID" && domain != "ID" && domain != "순번") { 
+				iOut.printf("\t\t\tentity.set%s(dto.get%s());\n", upperCaseNaming(genFieldValue(col)), upperCaseNaming(genFieldName(col)));
+			}
+		} else if (col.get("is-foreign-key") == true) {
+			//iOut.printf("\t\t\t fk -> %s;\n", col.get("physical-name"));
+			//log("fk -> " + col.getUserProperty("field-name"));			
+		} else {
+			var enum_type = col.getUserProperty("enum-type")
+			if(enum_type != null) {
+				iOut.printf("\t\t\tentity.set%s(%s.valueOf(dto.get%s()));\n", 
+					upperCaseNaming(genFieldValue(col)), upperCaseNaming(enum_type), upperCaseNaming(genFieldName(col)));								
+			} else {
+				iOut.printf("\t\t\tentity.set%s(dto.get%s());\n", upperCaseNaming(genFieldValue(col)), upperCaseNaming(genFieldName(col)));
+			}			
+		}
+		
+	});
+	
+	iOut.printf("\t\t}\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+	
+	
+	// end of class
+	iOut.printf("}\n");
+					
+	// file stream close
+	iOut.close();
+		
+}
+
+var genService = function() {
+	
+	var pkDataType = "Long";
+	if (pks.size() > 1) {
+		pkDataType = class_name + "Pk";
+	} else {
+		pks.each(function(pkCol){
+			pkDataType = genType(pkCol);
+		});
+	}
+	
+	var iFile = newFile("gen-sources/" + class_name + "Service.java", "UTF-8");
+	
+	if(iFile.exist()) {
+		if(!promptQuestion("[Service] exist old file. overwrite?")){
+			exit();
+		}
+	}
+	// file stream open
+	var iOut = iFile.getOutputStream();
+
+	// package & import
+	iOut.printf("package com.kyoborealco.kpmsn.service;\n");
+	iOut.printf("\n");
+
+	iOut.printf("import java.time.LocalDateTime;\n");
+	iOut.printf("import java.util.Optional;\n");
+	iOut.printf("\n");
+	iOut.printf("import javax.validation.Valid;\n");
+	iOut.printf("\n");
+	iOut.printf("import org.springframework.stereotype.Service;\n");
+	iOut.printf("\n");
+	iOut.printf("import lombok.RequiredArgsConstructor;\n");
+	iOut.printf("import lombok.extern.slf4j.Slf4j;\n");
+	iOut.printf("\n");
+
+	// start : service class
+	iOut.printf("@Slf4j\n");
+	iOut.printf("@Service\n");
+	iOut.printf("@RequiredArgsConstructor\n");
+	iOut.printf("public class %sService { \n", class_name);
+	iOut.printf("\n");
+	
+	iOut.printf("\tprivate final %sRepository %sRepository;\n", class_name, lowerCaseNaming(class_name));
+	iOut.printf("\tprivate final %sMapper %sMapper;\n", class_name, lowerCaseNaming(class_name));
+	
+	columns.each(function(col){
+		if(col.get("is-foreign-key") == true) {
+			colRefs.each(function(colRef) {
+				var child_col = colRef.get("child-column");
+				var parent_col = colRef.get("parent-column");
+				if(child_col.get("physical-name") == col.get("physical-name")) {
+					var parent_table = parent_col.get("table");
+					var parent_type_name = parent_table.getUserProperty("class-name") ? parent_table.getUserProperty("class-name") : parent_table.get("physical-name");
+					if(class_name != parent_type_name) {
+						iOut.printf("\tprivate final %sRepository %sRepository;\n", parent_type_name, lowerCaseNaming(parent_type_name));						
+					}
+				}
+			})
+		}
+	});
+	iOut.printf("\n");
+	
+	// create
+	iOut.printf("\tpublic %sDTO create%s(@Valid %sDTO dto) {\n", class_name, class_name, class_name);
+	iOut.printf("\n");
+	iOut.printf("\t\t%sRepository\n", lowerCaseNaming(class_name));
+	iOut.printf("\t\t\t.findById(dto.get%sId())\n", class_name);
+	iOut.printf("\t\t\t.ifPresent(\n");
+	iOut.printf("\t\t\t\texisting -> { throw new EntityAlreadyExistsException(); }\n");
+	iOut.printf("\t\t\t);\n");
+	iOut.printf("\n");
+	iOut.printf("\t\t%s entity = %sMapper.toEntity(dto);\n", class_name, lowerCaseNaming(class_name));
+	
+	iOut.printf("/*\n");
+	columns.each(function(col){
+		if(col.get("is-foreign-key") == true) {
+			colRefs.each(function(colRef) {
+				var child_col = colRef.get("child-column");
+				var parent_col = colRef.get("parent-column");
+				if(child_col.get("physical-name") == col.get("physical-name")) {
+					var parent_table = parent_col.get("table");
+					var parent_type_name = parent_table.getUserProperty("class-name") ? parent_table.getUserProperty("class-name") : parent_table.get("physical-name");
+					if(class_name != parent_type_name) {
+						iOut.printf("\t\tOptional<%s> %sOpt\n", parent_type_name, lowerCaseNaming(parent_type_name));
+						iOut.printf("\t\t\t= Optional.of(%sRepository.findById(dto.get%sId())\n", lowerCaseNaming(parent_type_name), parent_type_name);
+						iOut.printf("\t\t\t\t.orElseThrow(() -> new EntityNotExistsException()));\n");
+					} else {
+						iOut.printf("\t\tOptional<%s> parent%sOpt\n", parent_type_name, parent_type_name);
+						iOut.printf("\t\t\t= Optional.of(%sRepository.findById(dto.getParent%sId())\n", lowerCaseNaming(parent_type_name), parent_type_name);
+						iOut.printf("\t\t\t\t.orElseThrow(() -> new EntityNotExistsException()));\n");						
+					}
+				}
+			})
+		}
+	});
+	iOut.printf("\n");	
+	columns.each(function(col){
+		if(col.get("is-foreign-key") == true) {
+			colRefs.each(function(colRef) {
+				var child_col = colRef.get("child-column");
+				var parent_col = colRef.get("parent-column");
+				if(child_col.get("physical-name") == col.get("physical-name")) {
+					var parent_table = parent_col.get("table");
+					var parent_type_name = parent_table.getUserProperty("class-name") ? parent_table.getUserProperty("class-name") : parent_table.get("physical-name");
+					if(class_name != parent_type_name) {
+						iOut.printf("\t\tentity.set%s(%sOpt.get());\n", parent_type_name, lowerCaseNaming(parent_type_name));
+					} else {
+						iOut.printf("\t\tentity.setParent(parent%sOpt.get());\n", parent_type_name);				
+					}
+				}
+			})
+		}
+	});
+	iOut.printf("\n");
+	iOut.printf("*/\n");		
+	
+	iOut.printf("\t\t%sRepository.save(entity);\n", lowerCaseNaming(class_name));
+	iOut.printf("\t\tdto.set%sId(entity.getId());\n", class_name);
+	iOut.printf("\t\treturn dto;\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+	
+	// modify
+	iOut.printf("\tpublic %sDTO modify%s(@Valid %sDTO dto) {\n", class_name, class_name, class_name);
+	iOut.printf("\n");
+	iOut.printf("\t\tOptional<%s> opt \n", class_name);
+	iOut.printf("\t\t\t= Optional.of(%sRepository.findById(dto.get%sId())\n", lowerCaseNaming(class_name), class_name);
+	iOut.printf("\t\t\t\t.orElseThrow(() -> new EntityNotExistsException()));\n");
+	iOut.printf("\n");
+	iOut.printf("\t\t%s entity = opt.get();\n", class_name);
+	iOut.printf("\t\t%sMapper.toEntity(dto, entity);\n", lowerCaseNaming(class_name));
+	iOut.printf("\t\t%sRepository.save(entity);\n", lowerCaseNaming(class_name));		
+	iOut.printf("\t\treturn dto;\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");	
+	
+	// remove
+	iOut.printf("\tpublic void remove%s(%s id) {\n", class_name, pkDataType);
+	iOut.printf("\t\t%sRepository\n", lowerCaseNaming(class_name));
+	iOut.printf("\t\t\t.findById(id)\n");
+	iOut.printf("\t\t\t.ifPresent(\n");
+	iOut.printf("\t\t\t\tentity -> {\n");
+	iOut.printf("\t\t\t\t\t%sRepository.delete(entity);\n", lowerCaseNaming(class_name));
+	iOut.printf("\t\t\t\t}\n");
+	iOut.printf("\t\t\t);\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+		
+	// end of class
+	iOut.printf("} \n");
+					
+	// file stream close
+	iOut.close();
+}
+
+var genResource = function() {
+
+	var pkDataType = "Long";
+	if (pks.size() > 1) {
+		pkDataType = class_name + "Pk";
+	} else {
+		pks.each(function(pkCol){
+			pkDataType = genType(pkCol);
+		});
+	}
+	
+	var iFile = newFile("gen-sources/" + class_name + "Resource.java", "UTF-8");
+	
+	if(iFile.exist()) {
+		if(!promptQuestion("[Resource] exist old file. overwrite?")){
+			exit();
+		}
+	}
+	// file stream open
+	var iOut = iFile.getOutputStream();
+
+	// package & import
+	iOut.printf("package com.kyoborealco.kpmsn.api;\n");
+	iOut.printf("\n");
+	iOut.printf("import java.net.URI;\n");
+	iOut.printf("import java.util.List;\n");
+	iOut.printf("import java.net.URISyntaxException;\n");
+	iOut.printf("\n");
+	iOut.printf("import java.util.Optional;\n");
+	iOut.printf("\n");
+	iOut.printf("import javax.validation.Valid;\n");
+	iOut.printf("\n");
+	iOut.printf("import org.springframework.data.domain.Page;\n");
+	iOut.printf("import org.springframework.data.domain.PageRequest;\n");
+	iOut.printf("import org.springframework.data.domain.Pageable;\n");
+	iOut.printf("import org.springframework.data.domain.Sort;\n");
+	iOut.printf("import org.springframework.http.HttpHeaders;\n");
+	iOut.printf("import org.springframework.http.HttpStatus;\n");
+	iOut.printf("import org.springframework.http.ResponseEntity;\n");
+	iOut.printf("import org.springframework.transaction.annotation.Transactional;\n");
+	iOut.printf("import org.springframework.web.bind.annotation.DeleteMapping;\n");
+	iOut.printf("import org.springframework.web.bind.annotation.GetMapping;\n");
+	iOut.printf("import org.springframework.web.bind.annotation.PathVariable;\n");
+	iOut.printf("import org.springframework.web.bind.annotation.PostMapping;\n");
+	iOut.printf("import org.springframework.web.bind.annotation.PutMapping;\n");
+	iOut.printf("import org.springframework.web.bind.annotation.RequestBody;\n");
+	iOut.printf("import org.springframework.web.bind.annotation.RequestMapping;\n");
+	iOut.printf("import org.springframework.web.bind.annotation.RestController;\n");
+	iOut.printf("import org.springframework.web.servlet.support.ServletUriComponentsBuilder;\n");
+	iOut.printf("\n");
+	iOut.printf("import lombok.RequiredArgsConstructor;\n");
+	iOut.printf("import lombok.extern.slf4j.Slf4j;\n");
+	iOut.printf("\n");
+
+	// start : resource class
+	iOut.printf("@Slf4j\n");
+	iOut.printf("@RequiredArgsConstructor\n");
+	iOut.printf("@RestController\n");
+	iOut.printf("@RequestMapping(\"/api\")\n");
+	iOut.printf("public class %sResource {\n", class_name);
+	iOut.printf("\n");
+
+	iOut.printf("\tprivate static final String ENTITY_NAME = \"%s\";\n", lowerCaseNaming(class_name));
+	iOut.printf("\tprivate static final String REST_PATH = \"%s\";\n", lowerCaseNaming(rest_path));
+	iOut.printf("\tprivate final %sRepository %sRepository;\n", class_name,  lowerCaseNaming(class_name));
+	iOut.printf("\tprivate final %sService %sService;\n", class_name,  lowerCaseNaming(class_name));
+	//iOut.printf("\tprivate final %sMapper %sMapper;\n", class_name,  lowerCaseNaming(class_name));
+	iOut.printf("\n");
+
+	iOut.printf("\t/**\n");
+	iOut.printf("\t * %s 조회 (id)\n", entity_name);
+	iOut.printf("\t * @param id\n");
+	iOut.printf("\t * @return\n");
+	iOut.printf("\t * @throws URISyntaxException\n");
+	iOut.printf("\t */\n");
+	iOut.printf("\t@GetMapping(value=\"/\" + REST_PATH + \"/{id}\")\n");
+	iOut.printf("\t@Transactional(readOnly=true)\n");
+	iOut.printf("\tpublic ResponseEntity<%sDTO> find%s(@PathVariable %s id) throws URISyntaxException {\n", class_name, class_name, pkDataType);
+	iOut.printf("\t\tlog.debug(\"▶▶▶▶▶ /{}/{id} id => {}\", REST_PATH, id);\n");
+	iOut.printf("\t\t%sDTO dto = %sRepository.find%s(id);\n", class_name, lowerCaseNaming(class_name), class_name);
+	iOut.printf("\n");
+	iOut.printf("\t\tHttpHeaders headers = HeaderUtil.createAlert(ENTITY_NAME, id%s);\n", pkDataType != "String" ? ".toString()" : "");
+	iOut.printf("\t\treturn ResponseUtil\n");
+	iOut.printf("\t\t\t\t.wrapOrNotFound(Optional.ofNullable(dto), headers);\n");	
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+	
+	iOut.printf("\t/**\n");
+	iOut.printf("\t * %s 목록 검색\n", entity_name);
+	iOut.printf("\t * @param criteria\n");
+	iOut.printf("\t * @return\n");
+	iOut.printf("\t * @throws URISyntaxException\n");
+	iOut.printf("\t */\n");
+	iOut.printf("\t@PostMapping(value = \"/\" + REST_PATH + \"/search\")\n");
+	iOut.printf("\t@Transactional(readOnly = true)\n");
+	iOut.printf("\tpublic ResponseEntity<List<%sListDTO>> search%s(@Valid @RequestBody %sCriteria criteria) throws URISyntaxException {\n", class_name, class_name, class_name);
+	iOut.printf("\t\tlog.debug(\"▶▶▶▶▶ /{}/search criteria => {}\", REST_PATH, criteria);\n");
+	iOut.printf("\t\tList<%sListDTO> list\n", class_name);
+	iOut.printf("\t\t\t= %sRepository.search%s(\n", lowerCaseNaming(class_name), class_name);
+	
+	var optionIndex = 0;
+	optionColumns.each(function(col) {
+		optionIndex++;
+		if (optionIndex == 1) {
+			iOut.printf("\t\t\t\t  criteria.get%s()\n", upperCaseNaming(genFieldName(col)));			
+		} else {
+			iOut.printf("\t\t\t\t, criteria.get%s()\n", upperCaseNaming(genFieldName(col)));			
+		}
+		
+	});
+
+	iOut.printf("\t\t\t);\n");
+	iOut.printf("\n");
+	iOut.printf("\t\tHttpHeaders headers = HeaderUtil.createAlert( REST_PATH + \"_found\", \"criteria => \" + criteria );\n");
+	iOut.printf("\t\treturn ResponseEntity\n");
+	iOut.printf("\t\t\t\t.ok()\n");
+	iOut.printf("\t\t\t\t.headers(headers)\n");
+	iOut.printf("\t\t\t\t.body(list);\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+
+	iOut.printf("\t/**\n");
+	iOut.printf("\t * %s 목록 검색, 페이징\n", entity_name);
+	iOut.printf("\t * @param criteria\n");
+	iOut.printf("\t * @return\n");
+	iOut.printf("\t * @throws URISyntaxException\n");
+	iOut.printf("\t */\n");
+	iOut.printf("\t@PostMapping(value = \"/\" + REST_PATH + \"/search-page\")\n");
+	iOut.printf("\t@Transactional(readOnly = true)\n")
+	iOut.printf("\tpublic ResponseEntity<Page<%sListDTO>> searchPage%s(@Valid @RequestBody %sCriteria criteria) throws URISyntaxException {\n", class_name, class_name, class_name);
+	iOut.printf("\t\tlog.debug(\"▶▶▶▶▶ /{}/search-page criteria => {}\", REST_PATH, criteria);\n");
+	iOut.printf("\t\tPageable pageable = PageRequest.of(criteria.getPage(), criteria.getPageSize());\n");
+	iOut.printf("\t\tPage<%sListDTO> pages \n", class_name);
+	iOut.printf("\t\t\t= %sRepository.searchPage%s(\n", lowerCaseNaming(class_name), class_name);
+
+	var optionIndex = 0;
+	optionColumns.each(function(col) {
+		optionIndex++;
+		if (optionIndex == 1) {
+			iOut.printf("\t\t\t\t  criteria.get%s()\n", upperCaseNaming(genFieldName(col)));			
+		} else {
+			iOut.printf("\t\t\t\t, criteria.get%s()\n", upperCaseNaming(genFieldName(col)));			
+		}
+		
+	});
+
+	iOut.printf("\t\t\t\t, pageable\n");
+	iOut.printf("\t\t\t);\n");
+	iOut.printf("\n");
+	iOut.printf("\t\tHttpHeaders headers = PaginationUtil.generatePaginationHttpHeaders(ServletUriComponentsBuilder.fromCurrentRequest(), pages);\n");
+    iOut.printf("\t\treturn ResponseEntity\n");
+	iOut.printf("\t\t\t\t.ok()\n");
+	iOut.printf("\t\t\t\t.headers(headers)\n");
+    iOut.printf("\t\t\t\t.body(pages);\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+
+	iOut.printf("\t/**\n");
+	iOut.printf("\t * %s 등록\n", entity_name);
+	iOut.printf("\t * @param dto\n");
+	iOut.printf("\t * @return\n");
+	iOut.printf("\t * @throws URISyntaxException\n");
+	iOut.printf("\t */\n");
+	iOut.printf("\t@PostMapping(\"/\" + REST_PATH)\n");
+	iOut.printf("\t@Transactional\n");
+	iOut.printf("\tpublic ResponseEntity<%sDTO> create%s(@Valid @RequestBody %sDTO dto) throws URISyntaxException {\n", class_name, class_name, class_name);
+    iOut.printf("\t\tlog.debug(\"▶▶▶▶▶ /{}, create dto => {}\", REST_PATH, dto);\n");
+	//iOut.printf("\n");
+    //iOut.printf("\t\tif (dto.get%sId() == null) {\n", class_name);
+    //iOut.printf("\t\t\tthrow new BadRequestAlertException(\"ID는 필수입력 항목입니다.\", ENTITY_NAME, \"id_required\");\n");
+    //iOut.printf("\t\t}\n");
+	//iOut.printf("\n");
+    iOut.printf("\t\t%sDTO created = %sService.create%s(dto);\n", class_name, lowerCaseNaming(class_name), class_name);
+	iOut.printf("\n");
+    iOut.printf("\t\tHttpHeaders headers = HeaderUtil.createAlert(ENTITY_NAME +\".created\", created.get%sId()%s);\n", class_name, pkDataType != "String" ? ".toString()" : "");
+    iOut.printf("\t\treturn ResponseEntity\n");
+	iOut.printf("\t\t\t\t.created(new URI(\"/api/\" + REST_PATH + \"/\" + created.get%sId()))\n", class_name);
+    iOut.printf("\t\t\t\t.headers(headers)\n");
+    iOut.printf("\t\t\t\t.body(created);\n");
+    iOut.printf("\t}\n");
+	iOut.printf("\n");
+	
+	iOut.printf("\t/**\n");
+	iOut.printf("\t * %s 수정\n", entity_name);
+	iOut.printf("\t * @param dto\n");
+	iOut.printf("\t * @return\n");
+	iOut.printf("\t * @throws URISyntaxException\n");
+	iOut.printf("\t */\n");
+	iOut.printf("\t@PutMapping(\"/\" + REST_PATH)\n");	
+	iOut.printf("\t@Transactional\n");
+	iOut.printf("\tpublic ResponseEntity<%sDTO> modify%s(@Valid @RequestBody %sDTO dto) throws URISyntaxException  {\n", class_name, class_name, class_name);
+	iOut.printf("\t\tlog.debug(\"▶▶▶▶▶ /{}, modify dto => {}\", REST_PATH, dto);\n");
+    iOut.printf("\t\t%sDTO updated = %sService.modify%s(dto);\n", class_name, lowerCaseNaming(class_name), class_name);
+	iOut.printf("\n");
+	iOut.printf("\t\tHttpHeaders headers = HeaderUtil.createAlert(ENTITY_NAME +\".updated\", updated.get%sId()%s);\n", class_name, pkDataType != "String" ? ".toString()" : "");
+    iOut.printf("\t\treturn ResponseEntity\n");
+	iOut.printf("\t\t\t\t.ok()\n");
+	iOut.printf("\t\t\t\t.headers(headers)\n");
+	iOut.printf("\t\t\t\t.body(updated);\n");
+	iOut.printf("\t}\n");
+	iOut.printf("\n");
+	
+	iOut.printf("\t/**\n");
+	iOut.printf("\t * %s 삭제\n", entity_name);
+	iOut.printf("\t * @param id\n");
+	iOut.printf("\t * @return\n");
+	iOut.printf("\t */\n");
+	iOut.printf("\t@DeleteMapping(value=\"/\" + REST_PATH +\"/{id}\")\n");
+	iOut.printf("\t@Transactional\n");
+    iOut.printf("\tpublic ResponseEntity<Void> remove%s(@PathVariable %s id) {\n", class_name, pkDataType);
+	iOut.printf("\t\tlog.debug(\"▶▶▶▶▶ /{}/{id} remove id => {}\", REST_PATH, id);\n");
+	iOut.printf("\t\t%sService.remove%s(id);\n", lowerCaseNaming(class_name), class_name);
+	iOut.printf("\n");	
+	iOut.printf("\t\tHttpHeaders headers = HeaderUtil.createAlert(ENTITY_NAME + \".deleted\", id%s);\n", pkDataType != "String" ? ".toString()" : "");
+    iOut.printf("\t\treturn ResponseEntity\n");
+	iOut.printf("\t\t\t\t.noContent()\n");
+    iOut.printf("\t\t\t\t.headers(headers)\n");
+    iOut.printf("\t\t\t\t.build();\n");
+    iOut.printf("\t\t}\n");
+	iOut.printf("\n");
+	
+	
+	// end of class
+	iOut.printf("} \n");
+					
+	// file stream close
+	iOut.close();
+		
+}
+
+// 전역 선언
+var class_name = null;		// 클래스명 udp=="class-name" 또는 테이블 물리명
+var table_name = null;  	// 테이블 물리명
+var entity_name = null; 	// 테이블 논리명
+var colRefs = null;     	// 테이블 참조키 컬럼 목록(foreign key대상 컬럼들)
+var columns = null;     	// audit 컬럼을 제외한 컬럼 리스트
+var optionColumns = null;	// resource, repository 조회조건 항목(domain == "이름" || "여부")
+var pks = null;				// primary key 컬럼 목록
+var rest_path = null;		// 테이블(클래스)별로 정의된 rest path(entity의 복수형)
+var schema = null;
+var date = newDate().toLocaleString().substring(0,11);
+
+// 다이어그램에서 선택한 대상 iterate
+var interIndex = 0;
+selection.each(function(it) {
+	interIndex++;
+	var tables = it.select(function(it){
+		return it.get("type") == "table";
+	});
+	
+	if(tables.isEmpty()) {
+		log("▶▶▶▶▶ 테이블이 선택되지 않았습니다.");
+		exit();	
+	}
+
+	// table목록 순차 처리
+	tables.each(function(table) {
+
+		class_name = table.getUserProperty("class-name") ? table.getUserProperty("class-name") : table.get("physical-name");
+		rest_path = table.getUserProperty("rest-path") ? table.getUserProperty("rest-path") : lowerCaseNaming(table.get("physical-name")) + "s";
+		table_name = table.get("physical-name");
+		entity_name = table.get("logical-name"); 
+		colRefs = table.select(function(it){
+			return it.get("type") == "column-reference";
+		});
+		columns = table.select(function(it){
+			
+			return (it.get("type") == "column") && 
+				   (it.get("physical-name") != "Created" && it.get("physical-name") != "CreatedAt" 
+				 && it.get("physical-name") != "Modified" && it.get("physical-name") != "ModifiedAt")
+		});
+		optionColumns = table.select(function(it){
+			return (it.get("type") == "column" && (it.get("domain").get("name") == "이름" || it.get("domain").get("name") == "여부"));
+		});		
+		pks = columns.select(function(it){
+			return it.get("is-primary-key") == true;
+		});
+		schema = table.get("schema");
+		
+
+		genEntity();
+		genDTO("DTO");
+		//genDTO("CreateDTO");
+		//genDTO("UpdateDTO");		
+		genDTO("ListDTO");
+		genRepository();
+		genRepositoryExt();
+		genRepositoryImpl();
+		genCriteria();
+		genMapper();
+		genService();		
+		genResource();
+		
+		log("[" + interIndex +"]" + " Class=> " + class_name + " Table=> " + table_name + " Entity=> " + entity_name + " colums=> " + columns.size())
+	});
+	
+});
